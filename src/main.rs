@@ -1,4 +1,4 @@
-use std::env::var;
+use std::env::{args, var};
 use tracing::info;
 
 enum Listener {
@@ -52,6 +52,40 @@ async fn shutdown_signal() {
 
 #[tokio::main]
 async fn main() {
+    if args().any(|a| a == "--version" || a == "-V") {
+        println!("{}", env!("CARGO_PKG_VERSION"));
+        return;
+    }
+
+    if args().any(|a| a == "--help" || a == "-h") {
+        println!(
+            "{name} {version}
+{description}
+
+USAGE:
+    {name} [OPTIONS]
+
+OPTIONS:
+    -h, --help       Print this help message
+    -V, --version    Print version
+
+ENVIRONMENT:
+    NBP_URL          URL of the NBP RSS feed to fetch
+                     [default: https://rss.nbp.pl/kursy/TabelaA.xml]
+    NBP_ADDR         TCP address or unix socket path to bind to
+                     [default: 127.0.0.1:3000]
+                     Ignored when a socket is passed via systemd socket activation (FD#3)
+    RUST_LOG         Log verbosity filter
+                     Examples: warn | info | debug | trace
+                               nbp_rs=debug,tower_http=debug,info
+                     [default: nbp_rs=debug,tower_http=debug,info]",
+            name = env!("CARGO_PKG_NAME"),
+            version = env!("CARGO_PKG_VERSION"),
+            description = env!("CARGO_PKG_DESCRIPTION"),
+        );
+        return;
+    }
+
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()

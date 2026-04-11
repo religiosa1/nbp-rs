@@ -3,6 +3,7 @@ name = "nbp-rs"
 version = "0.1.0"
 edition = "2024"
 publish = false
+description = "HTTP-service to retrieve currency exchange rates from Narodowy Bank Polski (Tabela A)"
 
 [dependencies]
 axum = "0.8.8"

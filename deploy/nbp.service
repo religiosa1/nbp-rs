@@ -3,8 +3,11 @@ Description=nbp-rs currency exchange service
 Requires=nbp.socket
 
 [Service]
+# Only needed if you're going to start it manually
+Environment="NBP_ADDR=/run/nbp.sock"
 ExecStart=/usr/local/bin/nbp-rs
 NonBlocking=true
+StopIdleTimeout=30s
 
 [Install]
 WantedBy=multi-user.target
