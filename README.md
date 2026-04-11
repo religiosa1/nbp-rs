@@ -10,6 +10,9 @@ It retrieves the RSS feed exposed by NBP on the url https://rss.nbp.pl/kursy/Tab
 parses its items as well as embedded html description summary, that contains
 conversion rates.
 
+Initial response from NBP is stored in memory and subsequent requests are stored
+from the cached data, as long as it's not stale.
+
 Depending on `Accept` request header it either displays the data in JSON (the default)
 or a webpage, if `Accept: text/html` is passed.
 
@@ -18,6 +21,7 @@ or a webpage, if `Accept: text/html` is passed.
 All of the configuration is performed through the environment variables.
 
 - `NBP_URL` defaults to `https://rss.nbp.pl/kursy/TabelaA.xml`, address of the RSS feed to fetch;
+- `NBP_CACHE_TTL` how long to cache upstream responses, in seconds, defaults to `3600` (1 hour);
 - `RUST_LOG` logger verbosity, possible values: "trace", "debug", "info", "warn", "error"
   or per module: `nbp_rs=debug,tower_http=debug`
 

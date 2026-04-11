@@ -1,6 +1,6 @@
 {% macro currency(label, value) %}
   <div class="currency-item">
-    <dt>1 {{label}} =</dt>
+    <dt>{{label}} =</dt>
     <dd>{{value}} PLN</dd>
   </div>
 {% endmacro %}
@@ -29,11 +29,11 @@
         <p>1 USD = {{ "{:.4}"|format(cei.rates.usd / cei.rates.eur) }} EUR</p>
         <p>30 USD = {{"{:.4}"|format(30.0 * cei.rates.usd / cei.rates.eur) }} EUR</p>
         <dl>
-          {{ currency("EUR", cei.rates.eur) }}
-          {{ currency("USD", cei.rates.usd) }}
-          {% match cei.rates.chf %}{% when Some with (chf) %}{{ currency("CHF", chf) }}{% when None %}{% endmatch %}
-          {% match cei.rates.gbp %}{% when Some with (gbp) %}{{ currency("GBP", gbp) }}{% when None %}{% endmatch %}
-          {% match cei.rates.jpy %}{% when Some with (jpy) %}{{ currency("JPY", jpy) }}{% when None %}{% endmatch %}
+          {{ currency("1 EUR", cei.rates.eur) }}
+          {{ currency("1 USD", cei.rates.usd) }}
+          {% match cei.rates.chf %}{% when Some with (chf) %}{{ currency("1 CHF", chf) }}{% when None %}{% endmatch %}
+          {% match cei.rates.gbp %}{% when Some with (gbp) %}{{ currency("1 GBP", gbp) }}{% when None %}{% endmatch %}
+          {% match cei.rates.jpy100 %}{% when Some with (jpy) %}{{ currency("100 JPY", jpy) }}{% when None %}{% endmatch %}
         </dl>
       </div>
     </details>

@@ -1,6 +1,10 @@
 use chrono::{DateTime, Utc};
 use scraper::{Html, Selector};
 use serde::{Deserialize, Serialize};
+use std::sync::LazyLock;
+
+static TR_SELECTOR: LazyLock<Selector> = LazyLock::new(|| Selector::parse("tr").unwrap());
+static TD_SELECTOR: LazyLock<Selector> = LazyLock::new(|| Selector::parse("td").unwrap());
 
 #[derive(Debug, thiserror::Error)]
 pub enum ParseError {
@@ -21,16 +25,16 @@ pub enum ParseError {
     MissingRate(&'static str),
 }
 
-#[derive(Debug, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ExchangeRateSummary {
     pub eur: f64,
     pub usd: f64,
     pub chf: Option<f64>,
     pub gbp: Option<f64>,
-    pub jpy: Option<f64>,
+    pub jpy100: Option<f64>,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 pub struct CurrencyExchangeRateItem {
     pub title: String,
     pub pub_date: DateTime<Utc>,
@@ -82,17 +86,15 @@ struct RssItem {
 
 fn parse_rates_html(html: &str) -> Result<ExchangeRateSummary, ParseError> {
     let document = Html::parse_fragment(html);
-    let tr_selector = Selector::parse("tr").unwrap();
-    let td_selector = Selector::parse("td").unwrap();
 
     let mut eur = None;
     let mut usd = None;
     let mut chf = None;
     let mut gbp = None;
-    let mut jpy = None;
+    let mut jpy100 = None;
 
-    for tr in document.select(&tr_selector) {
-        let tds: Vec<_> = tr.select(&td_selector).collect();
+    for tr in document.select(&TR_SELECTOR) {
+        let tds: Vec<_> = tr.select(&TD_SELECTOR).collect();
         if tds.len() == 2 {
             let label = tds[0].text().collect::<String>();
             let value_str = tds[1].text().collect::<String>().replace(',', ".");
@@ -107,7 +109,7 @@ fn parse_rates_html(html: &str) -> Result<ExchangeRateSummary, ParseError> {
             } else if label.contains("GBP") {
                 gbp = Some(rate);
             } else if label.contains("JPY") {
-                jpy = Some(rate);
+                jpy100 = Some(rate);
             }
         }
     }
@@ -117,7 +119,7 @@ fn parse_rates_html(html: &str) -> Result<ExchangeRateSummary, ParseError> {
         usd: usd.ok_or(ParseError::MissingRate("USD"))?,
         chf,
         gbp,
-        jpy,
+        jpy100,
     })
 }
 
@@ -198,7 +200,7 @@ mod parser_tests {
                 usd: 3.6396,
                 chf: Some(4.6062),
                 gbp: Some(4.8848),
-                jpy: Some(2.2845),
+                jpy100: Some(2.2845),
             }
         );
     }

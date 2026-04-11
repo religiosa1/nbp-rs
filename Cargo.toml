@@ -1,13 +1,13 @@
 [package]
 name = "nbp-rs"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 publish = false
 description = "HTTP-service to retrieve currency exchange rates from Narodowy Bank Polski (Tabela A)"
 
 [dependencies]
 axum = "0.8.8"
-reqwest = { version = "0.13.2", features = ["json"] }
+reqwest = { version = "0.13.2" }
 quick-xml = { version = "0.39.2", features = ["serialize"] }
 serde = { version = "1.0.228", features = ["derive"] }
 tokio = { version = "1.51.1", features = ["full"] }
