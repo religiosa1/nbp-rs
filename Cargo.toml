@@ -11,6 +11,7 @@ quick-xml = { version = "0.39.2", features = ["serialize"] }
 serde = { version = "1.0.228", features = ["derive"] }
 tokio = { version = "1.51.1", features = ["full"] }
 thiserror = "2"
+listenfd = "1"
 tower = "0.5.3"
 chrono = { version = "0.4.44", features = ["serde"] }
 scraper = "0.26"
