@@ -18,13 +18,14 @@ or a webpage, if `Accept: text/html` is passed.
 All of the configuration is performed through the environment variables.
 
 - `NBP_URL` defaults to `https://rss.nbp.pl/kursy/TabelaA.xml`, address of the RSS feed to fetch;
+- `RUST_LOG` logger verbosity, possible values: "trace", "debug", "info", "warn", "error"
+  or per module: `nbp_rs=debug,tower_http=debug`
 
 The intended service usage is through the systemd unix socket, so service listens
 on the unix socket provided as FD#3. For local development it listens on the TCP
 sockets directly, using the following env vars for configuration:
 
-- `NBP_PORT` TCP port to bind to, defaults to 3000;
-- `NBP_ADDR` TCP address to bind to, defaults to `127.0.0.1`;
+- `NBP_ADDR` TCP address or unix socket to bind to, defaults to `127.0.0.1:3000`;
 
 ## Deployment
 

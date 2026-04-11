@@ -3,7 +3,7 @@ Description=nbp-rs currency exchange service
 Requires=nbp.socket
 
 [Service]
-ExecStart=/usr/local/bin/nbp
+ExecStart=/usr/local/bin/nbp-rs
 NonBlocking=true
 
 [Install]

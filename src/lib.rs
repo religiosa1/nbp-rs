@@ -10,6 +10,8 @@ use axum::{Router, routing::get};
 use std::time::Duration;
 use tower::BoxError;
 use tower::ServiceBuilder;
+use tower_http::trace::TraceLayer;
+use tracing::error;
 
 use nbp_parser::{CurrencyExchangeRateItem, ParseError, parse_nbp_xml};
 
@@ -51,8 +53,12 @@ enum AppError {
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         match self {
-            AppError::Upstream(_) => (StatusCode::BAD_GATEWAY, self.to_string()).into_response(),
+            AppError::Upstream(_) => {
+                error!("{self}");
+                (StatusCode::BAD_GATEWAY, self.to_string()).into_response()
+            }
             AppError::Network(_) | AppError::Template(_) => {
+                error!("{self}");
                 (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()).into_response()
             }
         }
@@ -76,7 +82,8 @@ pub fn create_router(nbp_url: String) -> Router {
         .layer(
             ServiceBuilder::new()
                 .layer(HandleErrorLayer::new(handle_error))
-                .timeout(Duration::from_secs(30)),
+                .timeout(Duration::from_secs(30))
+                .layer(TraceLayer::new_for_http()),
         )
 }
 

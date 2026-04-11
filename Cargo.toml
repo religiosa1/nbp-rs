@@ -13,6 +13,9 @@ tokio = { version = "1.51.1", features = ["full"] }
 thiserror = "2"
 listenfd = "1"
 tower = "0.5.3"
+tower-http = { version = "0.6", features = ["trace"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 chrono = { version = "0.4.44", features = ["serde"] }
 scraper = "0.26"
 askama = "0.15.6"
