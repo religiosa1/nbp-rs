@@ -1,0 +1,10 @@
+[Unit]
+Description=nbp-rs currency exchange service
+Requires=nbp.socket
+
+[Service]
+ExecStart=/usr/local/bin/nbp
+NonBlocking=true
+
+[Install]
+WantedBy=multi-user.target

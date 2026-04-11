@@ -1,0 +1,10 @@
+[Unit]
+Description=nbp-rs currency exchange rate Socket
+
+[Socket]
+ListenStream=/run/nbp.sock
+SocketMode=0660
+SocketUser=www-data
+
+[Install]
+WantedBy=sockets.target
