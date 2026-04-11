@@ -2,6 +2,25 @@ use chrono::{DateTime, Utc};
 use scraper::{Html, Selector};
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, thiserror::Error)]
+pub enum ParseError {
+    #[error("XML deserialization failed: {0}")]
+    Xml(#[from] quick_xml::DeError),
+
+    #[error("Invalid pubDate {date:?}: {source}")]
+    InvalidDate {
+        date: String,
+        #[source]
+        source: chrono::format::ParseError,
+    },
+
+    #[error("Invalid rate value: {0}")]
+    InvalidRate(#[from] std::num::ParseFloatError),
+
+    #[error("Missing {0} rate")]
+    MissingRate(&'static str),
+}
+
 #[derive(Debug, PartialEq, Serialize)]
 pub struct ExchangeRateSummary {
     pub eur: f64,
@@ -19,14 +38,17 @@ pub struct CurrencyExchangeRateItem {
     pub rates: ExchangeRateSummary,
 }
 
-pub fn parse_nbp_xml(xml: &str) -> Result<Vec<CurrencyExchangeRateItem>, anyhow::Error> {
+pub fn parse_nbp_xml(xml: &str) -> Result<Vec<CurrencyExchangeRateItem>, ParseError> {
     let rss: Rss = quick_xml::de::from_str(xml)?;
     rss.channel
         .items
         .into_iter()
         .map(|item| {
             let pub_date = DateTime::parse_from_rfc2822(&item.pub_date)
-                .map_err(|e| anyhow::anyhow!("Invalid pubDate {:?}: {e}", item.pub_date))?
+                .map_err(|source| ParseError::InvalidDate {
+                    date: item.pub_date.clone(),
+                    source,
+                })?
                 .with_timezone(&Utc);
             Ok(CurrencyExchangeRateItem {
                 title: item.title,
@@ -58,7 +80,7 @@ struct RssItem {
     description: String,
 }
 
-fn parse_rates_html(html: &str) -> Result<ExchangeRateSummary, anyhow::Error> {
+fn parse_rates_html(html: &str) -> Result<ExchangeRateSummary, ParseError> {
     let document = Html::parse_fragment(html);
     let tr_selector = Selector::parse("tr").unwrap();
     let td_selector = Selector::parse("td").unwrap();
@@ -91,8 +113,8 @@ fn parse_rates_html(html: &str) -> Result<ExchangeRateSummary, anyhow::Error> {
     }
 
     Ok(ExchangeRateSummary {
-        eur: eur.ok_or_else(|| anyhow::anyhow!("Missing EUR rate"))?,
-        usd: usd.ok_or_else(|| anyhow::anyhow!("Missing USD rate"))?,
+        eur: eur.ok_or(ParseError::MissingRate("EUR"))?,
+        usd: usd.ok_or(ParseError::MissingRate("USD"))?,
         chf,
         gbp,
         jpy,
@@ -137,7 +159,7 @@ mod parser_tests {
         </description>
         <link>http://rss.nbp.pl/kursy/TabRss.aspx?n=2026/a/26a068</link>
         <pubDate>Thu, 09 Apr 2026 11:45:14 +0200</pubDate>
-        <enclosure url="http://rss.nbp.pl/kursy/xml2/2026/a/26a068.xml" length="6453" type="text/xml"/>
+        <enclosure url="http://rss.nbp.nl/kursy/xml2/2026/a/26a068.xml" length="6453" type="text/xml"/>
         <guid isPermaLink="false">26a068</guid>
     </item>
     <item>
