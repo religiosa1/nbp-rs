@@ -9,8 +9,8 @@ use axum::response::{Html, IntoResponse, Response};
 use axum::{Router, routing::get};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::time::Instant;
 use tokio::sync::RwLock;
+use tokio::time::Instant;
 use tower::BoxError;
 use tower::ServiceBuilder;
 use tower_http::trace::TraceLayer;
@@ -26,7 +26,7 @@ struct IndexTemplate {
 
 struct CachedRates {
     fetched_at: Instant,
-    items: Vec<CurrencyExchangeRateItem>,
+    items: Arc<Vec<CurrencyExchangeRateItem>>,
 }
 
 #[derive(Clone)]
@@ -98,17 +98,20 @@ pub fn create_router(nbp_url: String, cache_ttl: Duration) -> Router {
         .layer(
             ServiceBuilder::new()
                 .layer(HandleErrorLayer::new(handle_error))
+                // TODO: do we need to move that into env, to avoid hardcoding?
                 .timeout(Duration::from_secs(30))
                 .layer(TraceLayer::new_for_http()),
         )
 }
 
-async fn get_exchange_rates(state: &AppState) -> Result<Vec<CurrencyExchangeRateItem>, AppError> {
+async fn get_exchange_rates(
+    state: &AppState,
+) -> Result<Arc<Vec<CurrencyExchangeRateItem>>, AppError> {
     if let Some(ref c) = *state.cache.read().await
         && c.fetched_at.elapsed() < state.cache_ttl
     {
         debug!("Serving from cache");
-        return Ok(c.items.clone());
+        return Ok(Arc::clone(&c.items));
     }
 
     let mut cache = state.cache.write().await;
@@ -117,14 +120,14 @@ async fn get_exchange_rates(state: &AppState) -> Result<Vec<CurrencyExchangeRate
         && c.fetched_at.elapsed() < state.cache_ttl
     {
         debug!("Serving from cache on a write lock");
-        return Ok(c.items.clone());
+        return Ok(Arc::clone(&c.items));
     }
 
     info!("Performing a request to NBP");
-    let items = fetch_from_upstream(state).await?;
+    let items = Arc::new(fetch_from_upstream(state).await?);
     *cache = Some(CachedRates {
         fetched_at: Instant::now(),
-        items: items.clone(),
+        items: Arc::clone(&items),
     });
     Ok(items)
 }
@@ -156,12 +159,12 @@ async fn handler(
         && prefers_html(hdr_str)
     {
         let html = IndexTemplate {
-            exchange_rate_items: exchange_rates,
+            exchange_rate_items: (*exchange_rates).clone(),
         }
         .render()?;
         Ok(Html(html).into_response())
     } else {
-        Ok(Json(exchange_rates).into_response())
+        Ok(Json(&*exchange_rates).into_response())
     }
 }
 

@@ -120,7 +120,7 @@ ENVIRONMENT:
     let app = nbp_rs::create_router(nbp_url, cache_ttl);
 
     let listener = Listener::bind().await.unwrap_or_else(|e| {
-        eprintln!("error: {e}");
+        tracing::error!("error: {e}");
         std::process::exit(1);
     });
     info!(
@@ -128,6 +128,7 @@ ENVIRONMENT:
         listener.local_addr().unwrap_or_else(|_| "unknown".into())
     );
 
+    // TODO: log out error instead of silently unwrapping? reduce duplication
     match listener {
         Listener::Tcp(l) => axum::serve(l, app)
             .with_graceful_shutdown(shutdown_signal())
