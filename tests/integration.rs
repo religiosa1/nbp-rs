@@ -29,6 +29,23 @@ async fn spawn_app(nbp_url: String) -> SocketAddr {
     addr
 }
 
+async fn spawn_app_with_mock() -> (SocketAddr, MockServer) {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(VALID_NBP_XML))
+        .mount(&mock_server)
+        .await;
+    let addr = spawn_app(mock_server.uri()).await;
+    (addr, mock_server)
+}
+
+fn content_type(resp: &reqwest::Response) -> &str {
+    resp.headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+}
+
 #[tokio::test]
 async fn happy_path_json() {
     let mock_server = MockServer::start().await;
@@ -46,13 +63,7 @@ async fn happy_path_json() {
         .unwrap();
 
     assert_eq!(resp.status(), 200);
-    assert!(resp
-        .headers()
-        .get("content-type")
-        .unwrap()
-        .to_str()
-        .unwrap()
-        .contains("application/json"));
+    assert!(content_type(&resp).contains("application/json"));
 
     let body: serde_json::Value = resp.json().await.unwrap();
     let items = body.as_array().unwrap();
@@ -79,13 +90,7 @@ async fn happy_path_html() {
         .unwrap();
 
     assert_eq!(resp.status(), 200);
-    assert!(resp
-        .headers()
-        .get("content-type")
-        .unwrap()
-        .to_str()
-        .unwrap()
-        .contains("text/html"));
+    assert!(content_type(&resp).contains("text/html"));
 
     let body = resp.text().await.unwrap();
     assert!(body.contains("Tabela nr 069/A/NBP/2026 z dnia 2026-04-10"));
@@ -126,4 +131,123 @@ async fn upstream_malformed_xml_returns_502() {
         .unwrap();
 
     assert_eq!(resp.status(), 502);
+}
+
+#[tokio::test]
+async fn no_accept_header_returns_json() {
+    let (addr, _mock) = spawn_app_with_mock().await;
+    let resp = reqwest::Client::new()
+        .get(format!("http://{addr}/"))
+        .send()
+        .await
+        .unwrap();
+    assert!(content_type(&resp).contains("application/json"));
+}
+
+#[tokio::test]
+async fn wildcard_accept_returns_json() {
+    let (addr, _mock) = spawn_app_with_mock().await;
+    let resp = reqwest::Client::new()
+        .get(format!("http://{addr}/"))
+        .header("Accept", "*/*")
+        .send()
+        .await
+        .unwrap();
+    assert!(content_type(&resp).contains("application/json"));
+}
+
+#[tokio::test]
+async fn text_html_returns_html() {
+    let (addr, _mock) = spawn_app_with_mock().await;
+    let resp = reqwest::Client::new()
+        .get(format!("http://{addr}/"))
+        .header("Accept", "text/html")
+        .send()
+        .await
+        .unwrap();
+    assert!(content_type(&resp).contains("text/html"));
+}
+
+#[tokio::test]
+async fn application_json_returns_json() {
+    let (addr, _mock) = spawn_app_with_mock().await;
+    let resp = reqwest::Client::new()
+        .get(format!("http://{addr}/"))
+        .header("Accept", "application/json")
+        .send()
+        .await
+        .unwrap();
+    assert!(content_type(&resp).contains("application/json"));
+}
+
+#[tokio::test]
+async fn json_higher_q_than_html_returns_json() {
+    let (addr, _mock) = spawn_app_with_mock().await;
+    let resp = reqwest::Client::new()
+        .get(format!("http://{addr}/"))
+        .header("Accept", "text/html;q=0.9, application/json")
+        .send()
+        .await
+        .unwrap();
+    assert!(content_type(&resp).contains("application/json"));
+}
+
+#[tokio::test]
+async fn html_higher_q_than_json_returns_html() {
+    let (addr, _mock) = spawn_app_with_mock().await;
+    let resp = reqwest::Client::new()
+        .get(format!("http://{addr}/"))
+        .header("Accept", "text/html, application/json;q=0.9")
+        .send()
+        .await
+        .unwrap();
+    assert!(content_type(&resp).contains("text/html"));
+}
+
+#[tokio::test]
+async fn text_wildcard_returns_html() {
+    let (addr, _mock) = spawn_app_with_mock().await;
+    let resp = reqwest::Client::new()
+        .get(format!("http://{addr}/"))
+        .header("Accept", "text/*")
+        .send()
+        .await
+        .unwrap();
+    assert!(content_type(&resp).contains("text/html"));
+}
+
+#[tokio::test]
+async fn text_wildcard_equal_q_to_json_returns_json() {
+    let (addr, _mock) = spawn_app_with_mock().await;
+    let resp = reqwest::Client::new()
+        .get(format!("http://{addr}/"))
+        .header("Accept", "text/*, application/json")
+        .send()
+        .await
+        .unwrap();
+    assert!(content_type(&resp).contains("application/json"));
+}
+
+#[tokio::test]
+async fn text_wildcard_higher_q_than_json_returns_html() {
+    let (addr, _mock) = spawn_app_with_mock().await;
+    let resp = reqwest::Client::new()
+        .get(format!("http://{addr}/"))
+        .header("Accept", "text/*, application/json;q=0.9")
+        .send()
+        .await
+        .unwrap();
+    assert!(content_type(&resp).contains("text/html"));
+}
+
+#[tokio::test]
+async fn explicit_html_overrides_text_wildcard_q() {
+    let (addr, _mock) = spawn_app_with_mock().await;
+    let resp = reqwest::Client::new()
+        .get(format!("http://{addr}/"))
+        .header("Accept", "text/html, text/*;q=0.9")
+        .send()
+        .await
+        .unwrap();
+    assert!(content_type(&resp).contains("text/html"));
 }

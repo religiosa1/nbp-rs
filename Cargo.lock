@@ -1047,7 +1047,7 @@ dependencies = [
 
 [[package]]
 name = "nbp-rs"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "askama",
  "axum",
@@ -1408,6 +1408,8 @@ dependencies = [
  "rustls",
  "rustls-pki-types",
  "rustls-platform-verifier",
+ "serde",
+ "serde_json",
  "sync_wrapper",
  "tokio",
  "tokio-rustls",

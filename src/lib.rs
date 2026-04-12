@@ -157,13 +157,11 @@ async fn handler(
 ) -> Result<impl IntoResponse, AppError> {
     let exchange_rates = get_exchange_rates(&state).await?;
 
-    // TODO: proper content negotiation, in case of `text/html;q=0.9, application/json`
-    let accepts_html = headers
-        .get(header::ACCEPT)
-        .and_then(|v| v.to_str().ok())
-        .is_some_and(|v| v.contains("text/html"));
+    let accept_hdr_str = headers.get(header::ACCEPT).and_then(|v| v.to_str().ok());
 
-    if accepts_html {
+    if let Some(hdr_str) = accept_hdr_str
+        && prefers_html(hdr_str)
+    {
         let html = IndexTemplate {
             exchange_rate_items: exchange_rates,
         }
@@ -172,6 +170,31 @@ async fn handler(
     } else {
         Ok(Json(exchange_rates).into_response())
     }
+}
+
+fn prefers_html(val: &str) -> bool {
+    let mut text_q = -1f32;
+    let mut html_q: Option<f32> = None;
+    let mut json_q = -1f32;
+    for part in val.split(',') {
+        let (mime, q) = match part.trim().split_once(';') {
+            Some((m, params)) => (
+                m.trim(),
+                params
+                    .split(';')
+                    .find_map(|p| p.trim().strip_prefix("q=")?.parse::<f32>().ok())
+                    .unwrap_or(1.0),
+            ),
+            None => (part.trim(), 1.0),
+        };
+        match mime {
+            "text/*" => text_q = q,
+            "text/html" => html_q = Some(q),
+            "application/json" => json_q = q,
+            _ => {}
+        }
+    }
+    html_q.unwrap_or(text_q) > json_q // ties to false
 }
 
 async fn handle_error(err: BoxError) -> (StatusCode, String) {
