@@ -1,4 +1,5 @@
 use std::net::SocketAddr;
+use std::time::Duration;
 use wiremock::matchers::method;
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -19,24 +20,28 @@ const VALID_NBP_XML: &str = r#"<rss xmlns:atom="http://www.w3.org/2005/Atom" ver
   </channel>
 </rss>"#;
 
-async fn spawn_app(nbp_url: String) -> SocketAddr {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .unwrap();
+const DEFAULT_TTL: Duration = Duration::from_secs(3600);
+
+async fn spawn_app(nbp_url: String, cache_ttl: Duration) -> SocketAddr {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
-    let app = nbp_rs::create_router(nbp_url);
+    let app = nbp_rs::create_router(nbp_url, cache_ttl);
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     addr
 }
 
-async fn spawn_app_with_mock() -> (SocketAddr, MockServer) {
+async fn spawn_app_with_mock_ttl(cache_ttl: Duration) -> (SocketAddr, MockServer) {
     let mock_server = MockServer::start().await;
     Mock::given(method("GET"))
         .respond_with(ResponseTemplate::new(200).set_body_string(VALID_NBP_XML))
         .mount(&mock_server)
         .await;
-    let addr = spawn_app(mock_server.uri()).await;
+    let addr = spawn_app(mock_server.uri(), cache_ttl).await;
     (addr, mock_server)
+}
+
+async fn spawn_app_with_mock() -> (SocketAddr, MockServer) {
+    spawn_app_with_mock_ttl(DEFAULT_TTL).await
 }
 
 fn content_type(resp: &reqwest::Response) -> &str {
@@ -54,7 +59,7 @@ async fn happy_path_json() {
         .mount(&mock_server)
         .await;
 
-    let addr = spawn_app(mock_server.uri()).await;
+    let addr = spawn_app(mock_server.uri(), DEFAULT_TTL).await;
     let resp = reqwest::Client::new()
         .get(format!("http://{addr}/"))
         .header("Accept", "application/json")
@@ -68,7 +73,10 @@ async fn happy_path_json() {
     let body: serde_json::Value = resp.json().await.unwrap();
     let items = body.as_array().unwrap();
     assert_eq!(items.len(), 1);
-    assert_eq!(items[0]["title"], "Tabela nr 069/A/NBP/2026 z dnia 2026-04-10");
+    assert_eq!(
+        items[0]["title"],
+        "Tabela nr 069/A/NBP/2026 z dnia 2026-04-10"
+    );
     assert_eq!(items[0]["rates"]["eur"], 4.2534);
     assert_eq!(items[0]["rates"]["usd"], 3.6396);
 }
@@ -81,7 +89,7 @@ async fn happy_path_html() {
         .mount(&mock_server)
         .await;
 
-    let addr = spawn_app(mock_server.uri()).await;
+    let addr = spawn_app(mock_server.uri(), DEFAULT_TTL).await;
     let resp = reqwest::Client::new()
         .get(format!("http://{addr}/"))
         .header("Accept", "text/html")
@@ -105,7 +113,7 @@ async fn upstream_bad_status_returns_502() {
         .mount(&mock_server)
         .await;
 
-    let addr = spawn_app(mock_server.uri()).await;
+    let addr = spawn_app(mock_server.uri(), DEFAULT_TTL).await;
     let resp = reqwest::Client::new()
         .get(format!("http://{addr}/"))
         .send()
@@ -123,7 +131,7 @@ async fn upstream_malformed_xml_returns_502() {
         .mount(&mock_server)
         .await;
 
-    let addr = spawn_app(mock_server.uri()).await;
+    let addr = spawn_app(mock_server.uri(), DEFAULT_TTL).await;
     let resp = reqwest::Client::new()
         .get(format!("http://{addr}/"))
         .send()
@@ -250,4 +258,66 @@ async fn explicit_html_overrides_text_wildcard_q() {
         .await
         .unwrap();
     assert!(content_type(&resp).contains("text/html"));
+}
+
+async fn upstream_hit_count(mock_server: &MockServer) -> usize {
+    mock_server
+        .received_requests()
+        .await
+        .unwrap_or_default()
+        .len()
+}
+
+async fn get(addr: SocketAddr) {
+    reqwest::Client::new()
+        .get(format!("http://{addr}/"))
+        .send()
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn first_call_hits_upstream() {
+    let (addr, mock_server) = spawn_app_with_mock_ttl(DEFAULT_TTL).await;
+    get(addr).await;
+    assert_eq!(upstream_hit_count(&mock_server).await, 1);
+}
+
+#[tokio::test]
+async fn subsequent_calls_use_cache() {
+    let (addr, mock_server) = spawn_app_with_mock_ttl(DEFAULT_TTL).await;
+    get(addr).await;
+    get(addr).await;
+    get(addr).await;
+    assert_eq!(upstream_hit_count(&mock_server).await, 1);
+}
+
+#[tokio::test]
+async fn cache_not_expired_before_ttl() {
+    // TTL well above test duration; second request must still be cached
+    let (addr, mock_server) = spawn_app_with_mock_ttl(Duration::from_secs(1)).await;
+    get(addr).await;
+    get(addr).await;
+    assert_eq!(upstream_hit_count(&mock_server).await, 1);
+}
+
+#[tokio::test]
+async fn cache_expires_after_ttl() {
+    let ttl = Duration::from_millis(100);
+    let (addr, mock_server) = spawn_app_with_mock_ttl(ttl).await;
+    get(addr).await;
+    tokio::time::sleep(ttl + Duration::from_millis(50)).await;
+    get(addr).await;
+    assert_eq!(upstream_hit_count(&mock_server).await, 2);
+}
+
+#[tokio::test]
+async fn cache_ttl_config_respected() {
+    let short_ttl = Duration::from_millis(100);
+    let (addr, mock_server) = spawn_app_with_mock_ttl(short_ttl).await;
+    get(addr).await;
+    // wait past short_ttl but well under DEFAULT_TTL — proves TTL came from config
+    tokio::time::sleep(short_ttl + Duration::from_millis(50)).await;
+    get(addr).await;
+    assert_eq!(upstream_hit_count(&mock_server).await, 2);
 }

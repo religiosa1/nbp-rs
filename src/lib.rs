@@ -8,7 +8,8 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{Html, IntoResponse, Response};
 use axum::{Router, routing::get};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use tokio::time::Instant;
 use tokio::sync::RwLock;
 use tower::BoxError;
 use tower::ServiceBuilder;
@@ -26,14 +27,6 @@ struct IndexTemplate {
 struct CachedRates {
     fetched_at: Instant,
     items: Vec<CurrencyExchangeRateItem>,
-}
-
-fn cache_ttl() -> Duration {
-    std::env::var("NBP_CACHE_TTL")
-        .ok()
-        .and_then(|v| v.parse::<u64>().ok())
-        .map(Duration::from_secs)
-        .unwrap_or(Duration::from_secs(3600))
 }
 
 #[derive(Clone)]
@@ -93,14 +86,14 @@ fn classify_reqwest_error(err: reqwest::Error) -> AppError {
     }
 }
 
-pub fn create_router(nbp_url: String) -> Router {
+pub fn create_router(nbp_url: String, cache_ttl: Duration) -> Router {
     Router::new()
         .route("/", get(handler))
         .with_state(AppState {
             nbp_url,
             client: reqwest::Client::new(),
             cache: Arc::new(RwLock::new(None)),
-            cache_ttl: cache_ttl(),
+            cache_ttl,
         })
         .layer(
             ServiceBuilder::new()

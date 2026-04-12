@@ -1,11 +1,6 @@
-use axum::serve::Listener as AxumListener;
 use std::env::{args, var};
-use tokio::io::{AsyncRead, AsyncWrite};
+use std::io;
 use tracing::info;
-
-trait Stream: AsyncRead + AsyncWrite + Unpin + Send + 'static {}
-impl<T: AsyncRead + AsyncWrite + Unpin + Send + 'static> Stream for T {}
-type DynStream = Box<dyn Stream>;
 
 enum Listener {
     Tcp(tokio::net::TcpListener),
@@ -13,61 +8,60 @@ enum Listener {
 }
 
 impl Listener {
-    pub async fn bind() -> Self {
+    pub async fn bind() -> io::Result<Self> {
         let mut listenfd = listenfd::ListenFd::from_env();
-        if let Some(listener) = listenfd.take_unix_listener(0).unwrap() {
-            listener.set_nonblocking(true).unwrap();
-            return Self::Unix(tokio::net::UnixListener::from_std(listener).unwrap());
+        if let Some(listener) = listenfd.take_unix_listener(0).map_err(|e| {
+            io::Error::new(e.kind(), format!("failed to acquire systemd socket: {e}"))
+        })? {
+            listener.set_nonblocking(true).map_err(|e| {
+                io::Error::new(
+                    e.kind(),
+                    format!("failed to set systemd socket non-blocking: {e}"),
+                )
+            })?;
+            return Ok(Self::Unix(
+                tokio::net::UnixListener::from_std(listener).map_err(|e| {
+                    io::Error::new(
+                        e.kind(),
+                        format!("failed to create async listener from systemd socket: {e}"),
+                    )
+                })?,
+            ));
         }
 
-        if let Ok(addr) = var("NBP_ADDR") {
-            if addr.starts_with('/') {
-                return Self::Unix(tokio::net::UnixListener::bind(&addr).unwrap());
-            } else {
-                return Self::Tcp(tokio::net::TcpListener::bind(&addr).await.unwrap());
-            }
-        }
+        let addr = var("NBP_ADDR").unwrap_or("127.0.0.1:3000".into());
 
-        Self::Tcp(
-            tokio::net::TcpListener::bind("127.0.0.1:3000")
+        match addr.starts_with('/') {
+            true => tokio::net::UnixListener::bind(&addr)
+                .map(Self::Unix)
+                .map_err(|e| {
+                    io::Error::new(
+                        e.kind(),
+                        format!("failed to bind unix socket {addr:?}: {e}"),
+                    )
+                }),
+            false => tokio::net::TcpListener::bind(&addr)
                 .await
-                .unwrap(),
-        )
-    }
-}
-
-impl axum::serve::Listener for Listener {
-    type Io = DynStream;
-    type Addr = String;
-
-    async fn accept(&mut self) -> (Self::Io, Self::Addr) {
-        match self {
-            Self::Tcp(l) => {
-                let (stream, addr) = tokio::net::TcpListener::accept(l).await.unwrap();
-                (Box::new(stream) as DynStream, addr.to_string())
-            }
-            Self::Unix(l) => {
-                let (stream, addr) = tokio::net::UnixListener::accept(l).await.unwrap();
-                let addr_str = addr
-                    .as_pathname()
-                    .and_then(|p: &std::path::Path| p.to_str())
-                    .unwrap_or("unix socket") // FIXME: log and continue instead
-                    .to_string();
-                (Box::new(stream) as DynStream, addr_str)
-            }
+                .map(Self::Tcp)
+                .map_err(|e| {
+                    io::Error::new(
+                        e.kind(),
+                        format!("failed to bind TCP address {addr:?}: {e}"),
+                    )
+                }),
         }
     }
 
-    fn local_addr(&self) -> std::io::Result<Self::Addr> {
-        Ok(match self {
-            Self::Tcp(l) => l.local_addr()?.to_string(),
-            Self::Unix(l) => l
+    pub fn local_addr(&self) -> io::Result<String> {
+        match self {
+            Self::Tcp(l) => Ok(l.local_addr()?.to_string()),
+            Self::Unix(l) => Ok(l
                 .local_addr()?
                 .as_pathname()
                 .and_then(|p| p.to_str())
                 .unwrap_or("unix socket")
-                .to_string(),
-        })
+                .to_string()),
+        }
     }
 }
 
@@ -117,17 +111,33 @@ ENVIRONMENT:
         .init();
 
     let nbp_url = var("NBP_URL").unwrap_or("https://rss.nbp.pl/kursy/TabelaA.xml".into());
-    let app = nbp_rs::create_router(nbp_url);
+    let cache_ttl = std::time::Duration::from_secs(
+        var("NBP_CACHE_TTL")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(3600),
+    );
+    let app = nbp_rs::create_router(nbp_url, cache_ttl);
 
-    let listener = Listener::bind().await;
+    let listener = Listener::bind().await.unwrap_or_else(|e| {
+        eprintln!("error: {e}");
+        std::process::exit(1);
+    });
     info!(
         "listening on {}",
-        AxumListener::local_addr(&listener).unwrap()
+        listener.local_addr().unwrap_or_else(|_| "unknown".into())
     );
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await
-        .unwrap();
+
+    match listener {
+        Listener::Tcp(l) => axum::serve(l, app)
+            .with_graceful_shutdown(shutdown_signal())
+            .await
+            .unwrap(),
+        Listener::Unix(l) => axum::serve(l, app)
+            .with_graceful_shutdown(shutdown_signal())
+            .await
+            .unwrap(),
+    }
 
     info!("server stopped");
 }
