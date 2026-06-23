@@ -24,6 +24,8 @@ All of the configuration is performed through the environment variables.
 - `NBP_CACHE_TTL` how long to cache upstream responses, in seconds, defaults to `3600` (1 hour);
 - `RUST_LOG` logger verbosity, possible values: "trace", "debug", "info", "warn", "error"
   or per module: `nbp_rs=debug,tower_http=debug`
+- `NBP_IDLE_TIMEOUT` automatic shutting down of the service after this amount of seconds,
+  0 or unset to disable
 
 The intended service usage is through the systemd unix socket, so service listens
 on the unix socket provided as FD#3. For local development it listens on the TCP

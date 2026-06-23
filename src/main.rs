@@ -1,5 +1,8 @@
 use std::env::{args, var};
 use std::io;
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::Notify;
 use tracing::info;
 
 enum Listener {
@@ -92,6 +95,9 @@ ENVIRONMENT:
                      Ignored when a socket is passed via systemd socket activation (FD#3)
     NBP_CACHE_TTL    How long to cache upstream responses, in seconds
                      [default: 3600]
+    NBP_IDLE_TIMEOUT Exit after this many seconds without requests, for
+                     systemd socket activation. 0 or unset disables it.
+                     [default: disabled]
     RUST_LOG         Log verbosity filter
                      Examples: warn | info | debug | trace
                                nbp_rs=debug,tower_http=debug,info
@@ -119,6 +125,33 @@ ENVIRONMENT:
     );
     let app = nbp_rs::create_router(nbp_url, cache_ttl);
 
+    // Idle self-shutdown: meant for systemd socket activation, where systemd
+    // restarts us on the next connection. 0 or unset disables it.
+    let idle_timeout: Option<Duration> = var("NBP_IDLE_TIMEOUT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .filter(|&s| s > 0)
+        .map(Duration::from_secs);
+
+    let (app, idle) = match idle_timeout {
+        Some(timeout) => {
+            let notify = Arc::new(Notify::new());
+            let mw_notify = Arc::clone(&notify);
+            let app = app.layer(axum::middleware::from_fn(
+                move |req: axum::extract::Request, next: axum::middleware::Next| {
+                    let notify = Arc::clone(&mw_notify);
+                    async move {
+                        notify.notify_one();
+                        next.run(req).await
+                    }
+                },
+            ));
+            info!("idle shutdown enabled, timeout {timeout:?}");
+            (app, Some((notify, timeout)))
+        }
+        None => (app, None),
+    };
+
     let listener = Listener::bind().await.unwrap_or_else(|e| {
         tracing::error!("error: {e}");
         std::process::exit(1);
@@ -131,11 +164,11 @@ ENVIRONMENT:
     // TODO: log out error instead of silently unwrapping? reduce duplication
     match listener {
         Listener::Tcp(l) => axum::serve(l, app)
-            .with_graceful_shutdown(shutdown_signal())
+            .with_graceful_shutdown(shutdown_signal(idle))
             .await
             .unwrap(),
         Listener::Unix(l) => axum::serve(l, app)
-            .with_graceful_shutdown(shutdown_signal())
+            .with_graceful_shutdown(shutdown_signal(idle))
             .await
             .unwrap(),
     }
@@ -143,7 +176,7 @@ ENVIRONMENT:
     info!("server stopped");
 }
 
-async fn shutdown_signal() {
+async fn shutdown_signal(idle: Option<(Arc<Notify>, Duration)>) {
     let ctrl_c = async {
         tokio::signal::ctrl_c()
             .await
@@ -161,9 +194,24 @@ async fn shutdown_signal() {
     #[cfg(not(unix))]
     let terminate = std::future::pending::<()>();
 
+    // Fires once no request arrives for `timeout`. Each request calls
+    // `notify_one`, resetting the sleep on the next loop iteration.
+    let idle = async {
+        match idle {
+            Some((notify, timeout)) => loop {
+                tokio::select! {
+                    _ = notify.notified() => continue,
+                    _ = tokio::time::sleep(timeout) => break,
+                }
+            },
+            None => std::future::pending::<()>().await,
+        }
+    };
+
     tokio::select! {
         _ = ctrl_c => {},
         _ = terminate => {},
+        _ = idle => info!("idle timeout reached"),
     }
 
     info!("shutdown signal received");
